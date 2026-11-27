@@ -1,0 +1,12 @@
+numpy>=1.26
+scipy>=1.11
+pyyaml>=6.0
+torch>=2.1               # Gaussian-process surrogate + autograd-optimised acquisition (CPU or CUDA)
+matplotlib>=3.7          # review plots (optional)
+trimesh>=4.0
+manifold3d>=2.5          # boolean engine used to cut the wing out of the CFD domain
+python-dotenv>=1.0
+isodate>=0.6
+simscale-sdk>=0.0.1      # SimScale API; if pip cannot find it: pip install git+https://github.com/SimScaleGmbH/simscale-python-sdk.git
+pytest>=7.0
+# OpenVSP's Python API (needed only for geometry.backend: openvsp) is installed separately - see README.

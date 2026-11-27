@@ -1,0 +1,123 @@
+# ===========================================================================
+#  BWB half-wing Bayesian optimisation -- TEST CASE (multi-objective)
+#  Axes: x aft (flow direction), y span (right), z up.  ONE half-wing only,
+#  mirrored about the xz plane (y = 0).  Units: metres, degrees, m/s.
+# ===========================================================================
+project:
+  name: bwb_test_case
+  workdir: runs/test_case
+
+geometry:
+  name: BWB_halfwing
+  backend: openvsp              # openvsp | analytic (analytic = pure-numpy loft, no OpenVSP needed)
+  symmetry_mode: half           # half = symmetry plane at y=0 in CFD | full = mirror the wing
+  origin: [0.0, 0.0, 0.0]       # root leading edge [x, y, z]; y must be 0
+  root_chord: 3.0
+  root_incidence_deg: 0.0
+  cg_x_frac_mac: 0.30           # moment reference point, fraction of MAC behind the MAC leading edge
+  # NACA 4-digit airfoil at each station, root -> tip (sections + 1 entries)
+  airfoil_stations: ["0020", "0018", "0014", "0012", "0010", "0009"]
+  sections:                     # root -> tip; chord of section i starts at tip_chord of section i-1
+    - {name: centrebody, span: 0.80, tip_chord: 2.70, sweep_deg: 58.0, twist_deg:  0.0, dihedral_deg: 0.0}
+    - {name: blend,      span: 0.70, tip_chord: 2.00, sweep_deg: 56.0, twist_deg: -0.5, dihedral_deg: 0.0}
+    - {name: inner_wing, span: 1.00, tip_chord: 1.40, sweep_deg: 40.0, twist_deg: -1.0, dihedral_deg: 2.0}
+    - {name: outer_wing, span: 1.00, tip_chord: 0.90, sweep_deg: 33.0, twist_deg: -2.0, dihedral_deg: 3.0}
+    - {name: tip,        span: 0.50, tip_chord: 0.55, sweep_deg: 33.0, twist_deg: -2.5, dihedral_deg: 3.0}
+  tess: {span_per_section: 12, chordwise: 41, le_cluster: 0.25, te_cluster: 0.25}
+
+flow:
+  speed: 100.0                  # m/s  (Mach ~0.29 at sea level: top of the incompressible range)
+  aoa_deg: 8.0
+  altitude_m: 0.0               # ISA
+  analysis_type: incompressible # incompressible | compressible   (choose per run: --analysis)
+  turbulence_intensity: 0.001
+
+domain:                         # far-field box around the wing
+  upstream_root_chords: 8.0
+  downstream_root_chords: 16.0
+  lateral_half_spans: 3.0
+  vertical_half_spans: 3.0
+
+mesh:                           # SimScale hex-dominant (snappyHexMesh) -- regular k-omega SST, no transition model
+  sizing_mode: manual           # manual | automatic
+  automatic_fineness: FINE
+  wall_treatment: resolved      # resolved = wall-resolved SST (y+ ~ 1) | wall_function (y+ ~ 30)
+  target_y_plus: 1.0
+  expansion_ratio: 1.25
+  max_layers: 36
+  min_thickness_ratio: 0.2
+  bl_coverage: 1.0
+  surface_min_mac_frac: 0.004
+  surface_max_mac_frac: 0.020
+  farfield_max_mac_frac: 0.60
+  near_body_size_mac_frac: 0.030
+  near_body_pad_root_chords: 0.5
+  wake_size_mac_frac: 0.060
+  wake_length_root_chords: 4.0
+  wake_half_height_root_chords: 0.6
+  use_feature_refinement: true
+  feature_distance_mac_frac: 0.05
+  processors: 16
+  max_run_time_s: 36000
+  max_cells: 4.0e7
+
+simscale:                       # API key/URL come from the environment (.env), never from this file
+  project_name: bwb-bayesopt
+  project_id: null              # set to reuse an existing SimScale project
+  geometry_format: STL
+  geometry_unit: m
+  facet_split: false
+  sewing: false
+  improve: true
+  material_name: Air
+  iterations: 1500
+  write_interval: 250
+  averaging_window: 200
+  poll_interval_s: 30
+  max_compute_units: 100.0      # abort a run if SimScale's estimate exceeds this (null = no guard)
+  entity_resolution: auto       # auto | manual (manual: list entity ids below)
+  manual_entities: {}           # e.g. {wing: [B1_TE1, ...], inlet: [...], outlet: [...], farfield: [...], symmetry: [...], fluid: [...]}
+  results_column_map: {}        # optional overrides, e.g. {fx: "Fx (total)", fy: ..., fz: ..., my: ...}
+  force_scale: 1.0              # multiply downloaded forces/moments (use rho if SimScale returns kinematic values)
+
+objective:                      # choose at run time with --objective, or edit here
+  mode: multi                   # max_ld | min_cd | max_ld_cm | multi
+  cl_target: 0.45
+  cm_target: 0.0
+  cm_scale: 0.05
+  cm_bounds: [-0.04, 0.04]      # used by max_ld_cm
+  normalise_by_baseline: true
+  weights: {ld: 0.5, cd: 0.2, cl: 0.2, cm: 0.1}      # used by multi
+  penalties: {cl: 5.0, cm: 20.0, failure_value: 10.0}
+
+optimisation:
+  seed: 7
+  n_initial: 8
+  n_iterations: 20
+  include_baseline: true
+  acquisition: ei               # ei | ucb | pi
+  xi: 0.01
+  kappa: 2.0
+  n_restarts: 4                 # GP hyper-parameter restarts (PyTorch, L-BFGS)
+  n_candidates: 8192
+  acq_starts: 8                 # multi-start autograd ascent on the acquisition
+  acq_steps: 80
+  batch_size: 1                 # >1 proposes a batch (Kriging believer) so CFD runs can go in parallel
+  device: auto                  # auto | cpu | cuda
+  patience: null
+  constraints:
+    half_span_range: [3.6, 4.4]
+    area_range: [8.0, 16.0]       # full-wing planform area [m^2]
+    min_tip_chord: 0.35
+    min_root_thickness_m: 0.45
+    max_le_sweep_deg: 65.0
+  design_variables:
+    - {name: sweep_blend,   param: sweep_deg,   section: 2, bounds: [50.0, 62.0]}
+    - {name: sweep_inner,   param: sweep_deg,   section: 3, bounds: [32.0, 48.0]}
+    - {name: sweep_outer,   param: sweep_deg,   section: 4, bounds: [26.0, 40.0]}
+    - {name: twist_inner,   param: twist_deg,   section: 3, bounds: [-3.0, 0.0]}
+    - {name: twist_outer,   param: twist_deg,   section: 4, bounds: [-4.0, 0.0]}
+    - {name: twist_tip,     param: twist_deg,   section: 5, bounds: [-5.0, 0.0]}
+    - {name: chord_outer,   param: tip_chord,   section: 4, bounds: [0.70, 1.10]}
+    - {name: chord_tip,     param: tip_chord,   section: 5, bounds: [0.40, 0.70]}
+    - {name: dihedral_outer, param: dihedral_deg, section: 4, bounds: [0.0, 6.0]}
